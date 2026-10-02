@@ -1293,18 +1293,16 @@ def test_sync_bulk_enabled_calls_run_bulk_pass_with_resolved_entries(tmp_path, m
 def test_sync_bulk_hydrated_prefix_counts_hydrated_without_repo_sync_report(
     tmp_path, monkeypatch, capsys
 ):
-    """A prefix `run_bulk_pass` reports as hydrated is trusted directly — it was deliberately
-    de-registered before `bd repo sync` ran, so that call's own (empty) report can say nothing
-    about it either way."""
+    """When bulk copy hydrates every hive, do not run the redundant JSONL importer."""
     from beadhive import hub_bulk
 
     monkeypatch.setattr(hub_bulk, "run_bulk_pass", lambda hub_dir, entries: ["a-one"])
+    calls = []
 
     def fake_run(cmd, **k):
+        calls.append(cmd)
         if cmd[3:5] == ["vc", "status"]:
             return Completed(0, _vc_status("c1"), "")
-        if cmd[3:5] == ["repo", "sync"]:
-            return Completed(0, "Multi-repo sync complete: imported 0 issue(s) from 0 repo(s)", "")
         return Completed(0, "", "")
 
     _wire(tmp_path, monkeypatch, fake_run, "one")
@@ -1315,6 +1313,7 @@ def test_sync_bulk_hydrated_prefix_counts_hydrated_without_repo_sync_report(
 
     assert failed == []
     assert "1 hydrated" in out.out
+    assert not any(cmd[3:5] == ["repo", "sync"] for cmd in calls)
     assert hub._load_watermarks(tmp_path / "hub") == {"a-one": "c1"}
 
 
@@ -1334,12 +1333,12 @@ def test_sync_bulk_hydrated_prefix_survives_a_failing_repo_sync_call(tmp_path, m
             return Completed(1, "", "Error: sync exploded\n")
         return Completed(0, "", "")
 
-    _wire(tmp_path, monkeypatch, fake_run, "one")
-    monkeypatch.setattr(hub.config, "load", lambda: _hive_cfg("one", bulk_sync=True))
+    _wire(tmp_path, monkeypatch, fake_run, "one", "two")
+    monkeypatch.setattr(hub.config, "load", lambda: _hive_cfg("one", "two", bulk_sync=True))
 
     failed = hub.sync()
 
-    assert failed == []
+    assert failed == ["a-two"]
     assert hub._load_watermarks(tmp_path / "hub") == {"a-one": "c1"}
 
 

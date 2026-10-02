@@ -924,21 +924,26 @@ def sync():
         bulk_hydrated = hub_bulk.run_bulk_pass(hub, bulk_entries)
 
     remainder = [(prefix, src) for prefix, src in added if prefix not in bulk_hydrated]
-    failure_markers = tuple(f"failed to import from {src}" for _, src in remainder)
-    res = bd.run(
-        ["repo", "sync"],
-        hub,
-        capture=True,
-        no_work_markers=failure_markers,
-    )
-    report = (res.stdout or "") + (res.stderr or "")
-    if res.returncode and not getattr(res, "bd_no_work", False):
-        typer.echo(f"  ✗ bd repo sync failed: {bd.err_line(res)}", err=True)
-        failed.extend(prefix for prefix, _ in remainder)
-        remainder = []
-    elif report.strip():
-        typer.echo(report.strip(), err=True)
-    failed.extend(prefix for prefix, src in remainder if f"failed to import from {src}" in report)
+    # Bulk copy has already hydrated every co-located hive when remainder is empty.
+    # Re-running the JSONL importer in that case can time out or collide on comment IDs.
+    if remainder:
+        failure_markers = tuple(f"failed to import from {src}" for _, src in remainder)
+        res = bd.run(
+            ["repo", "sync"],
+            hub,
+            capture=True,
+            no_work_markers=failure_markers,
+        )
+        report = (res.stdout or "") + (res.stderr or "")
+        if res.returncode and not getattr(res, "bd_no_work", False):
+            typer.echo(f"  ✗ bd repo sync failed: {bd.err_line(res)}", err=True)
+            failed.extend(prefix for prefix, _ in remainder)
+            remainder = []
+        elif report.strip():
+            typer.echo(report.strip(), err=True)
+        failed.extend(
+            prefix for prefix, src in remainder if f"failed to import from {src}" in report
+        )
     hydrated = [prefix for prefix, _ in remainder if prefix not in failed] + bulk_hydrated
 
     # Advance the watermark ONLY for a hive `bd repo sync` actually confirmed hydrated — never
